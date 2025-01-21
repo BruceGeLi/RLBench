@@ -1,5 +1,6 @@
 import argparse
 import os
+import time
 import pickle
 from multiprocessing import Manager, Process
 
@@ -16,6 +17,8 @@ from rlbench.backend import utils
 from rlbench.backend.const import *
 from rlbench.backend.utils import task_file_to_task_class
 from rlbench.environment import Environment
+from rlbench.tasks import *
+from simpub.sim.coppelia_sim_publisher import CoppeliaSimPublisher
 
 
 def check_and_make(dir):
@@ -194,7 +197,7 @@ def run(i, lock, task_index, variation_count, results, file_lock, tasks, args):
         obs_config=obs_config,
         arm_max_velocity=args.arm_max_velocity,
         arm_max_acceleration=args.arm_max_acceleration,
-        headless=True)
+        headless=False)
     rlbench_env.launch()
 
     task_env = None
@@ -228,6 +231,8 @@ def run(i, lock, task_index, variation_count, results, file_lock, tasks, args):
             t = tasks[task_index.value]
 
         task_env = rlbench_env.get_task(t)
+        task_env.set_variation(0)  # fix variation to 0
+
         task_env.set_variation(my_variation_count)
         descriptions, _ = task_env.reset()
 
@@ -245,16 +250,36 @@ def run(i, lock, task_index, variation_count, results, file_lock, tasks, args):
         check_and_make(episodes_path)
 
         abort_variation = False
+
+        # Hack
+        visual_keyword_list = ["visual", "visible"]  # Grill
+        # visual_keyword_list = ["visual", "visible", "cuboid"]  # Jenga
+        # visual_keyword_list = ["visual", "visible", "cup", "mug"]
+        # # # visual_keyword_list = ["visual", "visible", "box"]  # Box
+        # CoppeliaSimPublisher(task_env._pyrep, host='127.0.0.1',
+        #                      visual_layer_list=None,
+        #                      visual_keyword_list=visual_keyword_list,
+        #                      use_pyrep=True)
+        CoppeliaSimPublisher(task_env._pyrep, host='192.168.0.143',
+                             visual_layer_list=None,
+                             visual_keyword_list=visual_keyword_list,
+                             use_pyrep=True)
+        time.sleep(10)
+        # time.sleep(0.5)
+
         for ex_idx in range(args.episodes_per_task):
             print('Process', i, '// Task:', task_env.get_name(),
                   '// Variation:', my_variation_count, '// Demo:', ex_idx)
             attempts = 10
             while attempts > 0:
                 try:
-                    # TODO: for now we do the explicit looping.
+                    # TODO: for now we do the explicit looping. OFFICIAL TODO
+
                     demo, = task_env.get_demos(
                         amount=1,
                         live_demos=True)
+                    exit(0)
+
                 except Exception as e:
                     attempts -= 1
                     if attempts > 0:
@@ -277,17 +302,28 @@ def run(i, lock, task_index, variation_count, results, file_lock, tasks, args):
                 break
 
     results[i] = tasks_with_problems
-    rlbench_env.shutdown()
+    # rlbench_env.shutdown()
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="RLBench Dataset Generator")
     parser.add_argument('--save_path', type=str, default='/tmp/rlbench_data/', help='Where to save the demos.')
-    parser.add_argument('--tasks', nargs='*', default=[], help='The tasks to collect. If empty, all tasks are collected.')
+
+    parser.add_argument('--tasks', nargs='*',
+                        default=[
+                            'meat_on_grill',
+                            # 'play_jenga',
+                            # "remove_cups",
+                            # "put_books_on_bookshelf",
+                            # 'close_box'
+                        ],
+                        help='The tasks to collect. If empty, all tasks are collected.')
+    # parser.add_argument('--tasks', nargs='*', default=[], help='The tasks to collect. If empty, all tasks are collected.')
+
     parser.add_argument('--image_size', nargs=2, type=int, default=[128, 128], help='The size of the images to save.')
     parser.add_argument('--renderer', type=str, choices=['opengl', 'opengl3'], default='opengl3', help='The renderer to use. opengl does not include shadows, but is faster.')
     parser.add_argument('--processes', type=int, default=1, help='The number of parallel processes during collection.')
-    parser.add_argument('--episodes_per_task', type=int, default=10, help='The number of episodes to collect per task.')
+    parser.add_argument('--episodes_per_task', type=int, default=1, help='The number of episodes to collect per task.')
     parser.add_argument('--variations', type=int, default=-1, help='Number of variations to collect per task. -1 for all.')
     parser.add_argument('--arm_max_velocity', type=float, default=1.0, help='Max arm velocity used for motion planning.')
     parser.add_argument('--arm_max_acceleration', type=float, default=4.0, help='Max arm acceleration used for motion planning.')
@@ -295,6 +331,7 @@ def parse_args():
 
 
 def main():
+
     args = parse_args()
 
     task_files = [t.replace('.py', '') for t in os.listdir(task.TASKS_PATH)
@@ -319,6 +356,8 @@ def main():
 
     check_and_make(args.save_path)
 
+    # run(0, lock, task_index, variation_count, result_dict, file_lock,
+    #     tasks, args)
     processes = [Process(
         target=run, args=(
             i, lock, task_index, variation_count, result_dict, file_lock,
@@ -333,4 +372,5 @@ def main():
 
 
 if __name__ == '__main__':
+    np.random.seed(42)
     main()
